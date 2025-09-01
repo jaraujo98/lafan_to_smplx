@@ -11,5 +11,7 @@ This script depends on [General Motion Retargeting](https://github.com/YanjieZe/
 ## Usage
 
 ```
-python lafan_to_smplx.py --bvh_file [file from LAFAN1] --smplx_model_path [path to the folder containing the "smplx" folder with the SMPL-X body models] [--rerun]
+python lafan_to_smplx.py --bvh_file [file from LAFAN1] --smplx_model_path [path to the folder containing the "smplx" folder with the SMPL-X body models] --output [output file path] [--rerun]
 ```
+
+You can visualize the result using either [Rerun](https://rerun.io/) or [Blender](https://www.blender.org/) using the SMPL-X Blender add-on.

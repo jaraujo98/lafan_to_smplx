@@ -118,6 +118,11 @@ if __name__ == "__main__":
         type=str,
     )
     parser.add_argument(
+        "--output_file",
+        type=str,
+        help="Path to save the output .npz file",
+    )
+    parser.add_argument(
         "--rerun",
         action="store_true",
         help="Whether to visualize the result in Rerun",
@@ -193,22 +198,20 @@ if __name__ == "__main__":
 
         with torch.no_grad():
             smplx_output = body_model(
-                # global_orient=torch.tensor([[[np.pi / 2, 0.0, 0.0]]], device=device),
                 global_orient=torch.tensor(
                     root_orient.as_rotvec().reshape(1, 1, 3), device=device
                 ).float(),
-                body_pose=torch.tensor(
-                    body_pose.reshape(1, 21, 3), device=device
-                ).float(),
+                body_pose=body_pose.reshape(1, 21, 3),
                 return_full_pose=True,
             )
             smplx_data = get_smplx_data(None, body_model, smplx_output, 0)
 
-        lafan_positions = torch.tensor(
-            [frames[frame][name][0] for name in frames[frame] if "Mod" not in name],
-            device=device,
-            dtype=torch.float32,
-        )
+        lafan_positions = torch.from_numpy(
+            np.array(
+                [frames[frame][name][0] for name in frames[frame] if "Mod" not in name],
+                dtype=np.float32,
+            )
+        ).to(device)
         lafan_centroid = lafan_positions.mean(dim=0)
 
         smplx_centroid = smplx_output.joints[0, :22].mean(dim=0)
@@ -231,3 +234,21 @@ if __name__ == "__main__":
                     triangle_indices=body_model.faces,
                 ),
             )
+
+    if args.output_file is not None:
+        hand_pose_tensor = torch.zeros(
+            (n_frames, 3 + 15 * 2, 3), device=device, dtype=torch.float32
+        )
+        np.savez(
+            args.output_file,
+            trans=trans_tensor.cpu().numpy(),
+            gender="neutral",
+            mocap_frame_rate=30,
+            betas=body_model.betas.detach().cpu().squeeze().numpy(),
+            poses=torch.cat(
+                [root_orient_tensor.unsqueeze(1), body_pose_tensor, hand_pose_tensor],
+                dim=1,
+            )
+            .cpu()
+            .numpy(),
+        )
