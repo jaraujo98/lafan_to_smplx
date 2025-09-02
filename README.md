@@ -15,3 +15,9 @@ python lafan_to_smplx.py --bvh_file [file from LAFAN1] --smplx_model_path [path 
 ```
 
 You can visualize the result using either [Rerun](https://rerun.io/) or [Blender](https://www.blender.org/) using the SMPL-X Blender add-on.
+
+Alternatively, you can also convert to the SMPL body model. This one can only be visualized with Rerun, as the SMPL Blender add-on does not support loading animations.
+
+```
+python lafan_to_smplx.py --bvh_file [file from LAFAN1] --smplx_model_path [path to the folder containing the "smplx" folder with the SMPL-X body models] --model_type smpl --output [output file path] [--rerun]
+```

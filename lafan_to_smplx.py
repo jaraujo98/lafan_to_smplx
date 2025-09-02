@@ -34,7 +34,6 @@ from general_motion_retargeting.utils.lafan_vendor.extract import read_bvh
 from general_motion_retargeting.utils.lafan1 import (
     load_lafan1_file as _load_lafan1_file,
 )
-from general_motion_retargeting.utils.smpl import get_smplx_data
 
 
 def load_lafan1_file(file_path):
@@ -107,6 +106,49 @@ smplx_to_lafan_map = {
 }
 
 
+betas = {
+    "smpl": torch.tensor(
+        [
+            [
+                0.9597,
+                1.0887,
+                -2.1717,
+                -0.8611,
+                1.3940,
+                0.1401,
+                -0.2469,
+                0.3182,
+                -0.2482,
+                0.3085,
+            ]
+        ],
+        dtype=torch.float32,
+    ),
+    "smplx": torch.tensor(
+        [
+            [
+                1.4775,
+                0.6674,
+                -1.1742,
+                0.4731,
+                1.2984,
+                -0.2159,
+                1.5276,
+                -0.3152,
+                -0.6441,
+                -0.2986,
+                0.5089,
+                -0.6354,
+                0.3321,
+                -0.1099,
+                -0.3060,
+                -0.7330,
+            ]
+        ],
+        dtype=torch.float32,
+    ),
+}
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -116,6 +158,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--smplx_model_path",
         type=str,
+    )
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        default="smplx",
+        choices=["smpl", "smplx"],
     )
     parser.add_argument(
         "--output_file",
@@ -137,31 +185,9 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     body_model = smplx.create(
         model_path=args.smplx_model_path,
-        model_type="smplx",
+        model_type=args.model_type,
         use_pca=False,
-        betas=torch.tensor(
-            [
-                [
-                    1.4775,
-                    0.6674,
-                    -1.1742,
-                    0.4731,
-                    1.2984,
-                    -0.2159,
-                    1.5276,
-                    -0.3152,
-                    -0.6441,
-                    -0.2986,
-                    0.5089,
-                    -0.6354,
-                    0.3321,
-                    -0.1099,
-                    -0.3060,
-                    -0.7330,
-                ]
-            ],
-            device=device,
-        ),
+        betas=betas[args.model_type].to(device),
     )
 
     if args.rerun:
@@ -172,7 +198,7 @@ if __name__ == "__main__":
     trans_tensor = torch.zeros((n_frames, 3), device=device, dtype=torch.float32)
     root_orient_tensor = torch.zeros((n_frames, 3), device=device, dtype=torch.float32)
     body_pose_tensor = torch.zeros(
-        (n_frames, 21, 3), device=device, dtype=torch.float32
+        (n_frames, body_model.NUM_BODY_JOINTS, 3), device=device, dtype=torch.float32
     )
     for frame in range(n_frames):
         # Get the root orientation and body pose for the current frame
@@ -181,11 +207,15 @@ if __name__ == "__main__":
             * lafan_frame_offsets["Hips"]
         )
 
-        body_pose = torch.zeros((21, 3), device=device, dtype=torch.float32)
-        for i, joint_name in enumerate(JOINT_NAMES[1:22]):
-            lafan_joint_name = smplx_to_lafan_map[joint_name]
-            if lafan_joint_name == []:
+        body_pose = torch.zeros(
+            (body_model.NUM_BODY_JOINTS, 3), device=device, dtype=torch.float32
+        )
+        for i, joint_name in enumerate(
+            JOINT_NAMES[1:22]
+        ):  # Joint names for SMPL and SMPL-X are equal
+            if joint_name not in smplx_to_lafan_map:
                 continue
+            lafan_joint_name = smplx_to_lafan_map[joint_name]
             parent_name = data.bones[data.parents[data.bones.index(lafan_joint_name)]]
             body_pose[i] = torch.from_numpy(
                 get_smplx_local_joint(
@@ -201,10 +231,9 @@ if __name__ == "__main__":
                 global_orient=torch.tensor(
                     root_orient.as_rotvec().reshape(1, 1, 3), device=device
                 ).float(),
-                body_pose=body_pose.reshape(1, 21, 3),
+                body_pose=body_pose.reshape(1, body_model.NUM_BODY_JOINTS, 3),
                 return_full_pose=True,
             )
-            smplx_data = get_smplx_data(None, body_model, smplx_output, 0)
 
         lafan_positions = torch.from_numpy(
             np.array(
@@ -214,6 +243,7 @@ if __name__ == "__main__":
         ).to(device)
         lafan_centroid = lafan_positions.mean(dim=0)
 
+        # Again, we only care about root + 21 joints
         smplx_centroid = smplx_output.joints[0, :22].mean(dim=0)
 
         trans_tensor[frame] = lafan_centroid - smplx_centroid
@@ -236,19 +266,20 @@ if __name__ == "__main__":
             )
 
     if args.output_file is not None:
-        hand_pose_tensor = torch.zeros(
-            (n_frames, 3 + 15 * 2, 3), device=device, dtype=torch.float32
+        full_poses_tensor = torch.cat(
+            [root_orient_tensor.unsqueeze(1), body_pose_tensor],
+            dim=1,
         )
+        if args.model_type == "smplx":
+            hand_pose_tensor = torch.zeros(
+                (n_frames, 3 + 15 * 2, 3), device=device, dtype=torch.float32
+            )
+            full_poses_tensor = torch.cat([full_poses_tensor, hand_pose_tensor], dim=1)
         np.savez(
             args.output_file,
             trans=trans_tensor.cpu().numpy(),
             gender="neutral",
             mocap_frame_rate=30,
             betas=body_model.betas.detach().cpu().squeeze().numpy(),
-            poses=torch.cat(
-                [root_orient_tensor.unsqueeze(1), body_pose_tensor, hand_pose_tensor],
-                dim=1,
-            )
-            .cpu()
-            .numpy(),
+            poses=full_poses_tensor.cpu().numpy(),
         )
